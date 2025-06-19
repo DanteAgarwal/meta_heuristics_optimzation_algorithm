@@ -1,17 +1,27 @@
+import numpy as np
 import random
 import time
-
 import matplotlib.pyplot as plt
-import numpy as np
+from multiprocessing import Pool, cpu_count
+
+
+def evaluate_population_mp(objf, population):
+    """Parallel evaluation of objective function using multiprocessing."""
+    with Pool(processes=cpu_count()) as pool:
+        fitness = pool.map(objf, population)
+    return np.array(fitness)
 
 
 def GWO(objf, lb, ub, dim, SearchAgents_no, Max_iter):
-    # Max_iter=1000
-    # lb=-100
-    # ub=100
-    # dim=30
-    # SearchAgents_no=5
-    # initialize alpha, beta, and delta_pos
+    if not isinstance(lb, list):
+        lb = [lb] * dim
+    if not isinstance(ub, list):
+        ub = [ub] * dim
+
+    lb = np.array(lb)
+    ub = np.array(ub)
+
+    # Initialize alpha, beta, and delta
     Alpha_pos = np.zeros(dim)
     Alpha_score = float("inf")
 
@@ -21,97 +31,76 @@ def GWO(objf, lb, ub, dim, SearchAgents_no, Max_iter):
     Delta_pos = np.zeros(dim)
     Delta_score = float("inf")
 
-    if not isinstance(lb, list):
-        lb = [lb] * dim
-    if not isinstance(ub, list):
-        ub = [ub] * dim
-
-    # Initialize the positions of search agents
-    Positions = np.zeros((SearchAgents_no, dim))
-    for i in range(dim):
-        Positions[:, i] = np.random.uniform(0, 1, SearchAgents_no) * (ub[i] - lb[i]) + lb[i]
-
+    # Initialize positions
+    Positions = np.random.uniform(lb, ub, (SearchAgents_no, dim))
     Convergence_curve = np.zeros(Max_iter)
 
-    # Loop counter
-    print("GWO is optimizing  \"" + objf.__name__ + "\"")
-
+    print(f'GWO is optimizing "{objf.__name__}"')
     timerStart = time.time()
-    # Main loop
-    for l in range(0, Max_iter):
-        for i in range(0, SearchAgents_no):
 
-            # Return back the search agents that go beyond the boundaries of the search space
-            for j in range(dim):
-                Positions[i, j] = np.clip(Positions[i, j], lb[j], ub[j])
+    for l in range(Max_iter):
+        # Boundary check
+        Positions = np.clip(Positions, lb, ub)
 
-            # Calculate objective function for each search agent
-            fitness = objf(Positions[i, :])
+        # Evaluate fitness in parallel
+        fitness_vals = evaluate_population_mp(objf, Positions)
 
-            # Update Alpha, Beta, and Delta
+        # Rank and update alpha, beta, delta
+        for i in range(SearchAgents_no):
+            fitness = fitness_vals[i]
             if fitness < Alpha_score:
-                Alpha_score = fitness;  # Update alpha
-                Alpha_pos = Positions[i, :].copy()
+                Alpha_score, Alpha_pos = fitness, Positions[i].copy()
+            elif fitness < Beta_score:
+                Beta_score, Beta_pos = fitness, Positions[i].copy()
+            elif fitness < Delta_score:
+                Delta_score, Delta_pos = fitness, Positions[i].copy()
 
-            if (fitness > Alpha_score and fitness < Beta_score):
-                Beta_score = fitness  # Update beta
-                Beta_pos = Positions[i, :].copy()
+        a = 2 - l * (2 / Max_iter)  # Linearly decreases from 2 to 0
 
-            if (fitness > Alpha_score and fitness > Beta_score and fitness < Delta_score):
-                Delta_score = fitness  # Update delta
-                Delta_pos = Positions[i, :].copy()
+        # Update position
+        for i in range(SearchAgents_no):
+            for j in range(dim):
+                # Alpha
+                r1, r2 = random.random(), random.random()
+                A1 = 2 * a * r1 - a
+                C1 = 2 * r2
+                D_alpha = abs(C1 * Alpha_pos[j] - Positions[i, j])
+                X1 = Alpha_pos[j] - A1 * D_alpha
 
-        a = 2 - l * ((2) / Max_iter);  # a decreases linearly from 2 to 0
+                # Beta
+                r1, r2 = random.random(), random.random()
+                A2 = 2 * a * r1 - a
+                C2 = 2 * r2
+                D_beta = abs(C2 * Beta_pos[j] - Positions[i, j])
+                X2 = Beta_pos[j] - A2 * D_beta
 
-        # Update the Position of search agents including omegas
-        for i in range(0, SearchAgents_no):
-            for j in range(0, dim):
-                r1 = random.random()  # r1 is a random number in [0,1]
-                r2 = random.random()  # r2 is a random number in [0,1]
+                # Delta
+                r1, r2 = random.random(), random.random()
+                A3 = 2 * a * r1 - a
+                C3 = 2 * r2
+                D_delta = abs(C3 * Delta_pos[j] - Positions[i, j])
+                X3 = Delta_pos[j] - A3 * D_delta
 
-                A1 = 2 * a * r1 - a;  # Equation (3.3)
-                C1 = 2 * r2;  # Equation (3.4)
+                # Average the positions
+                Positions[i, j] = (X1 + X2 + X3) / 3
 
-                D_alpha = abs(C1 * Alpha_pos[j] - Positions[i, j]);  # Equation (3.5)-part 1
-                X1 = Alpha_pos[j] - A1 * D_alpha;  # Equation (3.6)-part 1
+        Convergence_curve[l] = Alpha_score
 
-                r1 = random.random()
-                r2 = random.random()
+        print(f"Iteration {l+1}: Best Fitness = {Alpha_score:.6f}")
 
-                A2 = 2 * a * r1 - a;  # Equation (3.3)
-                C2 = 2 * r2;  # Equation (3.4)
+    fire = round(time.time() - timerStart, 2)
+    print("Completed in", fire, "seconds")
 
-                D_beta = abs(C2 * Beta_pos[j] - Positions[i, j]);  # Equation (3.5)-part 2
-                X2 = Beta_pos[j] - A2 * D_beta;  # Equation (3.6)-part 2
-
-                r1 = random.random()
-                r2 = random.random()
-
-                A3 = 2 * a * r1 - a;  # Equation (3.3)
-                C3 = 2 * r2;  # Equation (3.4)
-
-                D_delta = abs(C3 * Delta_pos[j] - Positions[i, j]);  # Equation (3.5)-part 3
-                X3 = Delta_pos[j] - A3 * D_delta;  # Equation (3.5)-part 3
-
-                Positions[i, j] = (X1 + X2 + X3) / 3  # Equation (3.7)
-
-        Convergence_curve[l] = Alpha_score;
-
-        if (l % 1 == 0):
-            print(['At iteration ' + str(l+1) + ' the best fitness is ' + str(Alpha_score)])
-
-    x = np.arange(0, Max_iter, dtype=int) + 1
-    timerEnd = time.time()
-    print('Completed in', (timerEnd - timerStart))
-    fire = (timerEnd - timerStart)
+    # Plot
+    x = np.arange(1, Max_iter + 1)
     plt.plot(x, Convergence_curve, 'o-')
     plt.xlabel("Iterations")
     plt.ylabel("Fitness")
+    plt.grid()
     plt.title(
-        f"Convergence_curve for GWO for parameter including population "
-        f"{SearchAgents_no}, \niteration {Max_iter},and  max fitness is:{min(Convergence_curve)}")
+        f"Convergence Curve - GWO\nPopulation: {SearchAgents_no}, Iterations: {Max_iter}, "
+        f"Best Fitness: {round(Alpha_score, 3)}"
+    )
     plt.show()
 
-    opts ={"p":Alpha_pos,'c':min(Convergence_curve),"ti":fire}
-
-    return opts
+    return {"p": Alpha_pos, "c": round(Alpha_score, 3), "ti": fire}
